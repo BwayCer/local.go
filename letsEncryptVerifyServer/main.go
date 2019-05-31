@@ -7,46 +7,71 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
 func main() {
 	insCmdFlag := handleFlag()
-
-	if insCmdFlag.Path == "" || string(insCmdFlag.Path[0]) != "/" || insCmdFlag.Key == "" {
-		panic("未提供指定路徑或指定金鑰。")
-	}
-
-	server := &http.Server{Addr: "0.0.0.0:8080"}
-
-	http.HandleFunc(insCmdFlag.Path, func(resp http.ResponseWriter, requ *http.Request) {
-		record(requ, true)
-
-		key := insCmdFlag.Key
-
-		resp.Header().Set("Content-Type", "text/plain")
-		resp.Header().Set("Content-Length", strconv.Itoa(len(key)))
-		resp.WriteHeader(http.StatusOK)
-		io.WriteString(resp, key)
-	})
+	keyList := insCmdFlag.KeyList.Cache
 
 	http.HandleFunc("/", func(resp http.ResponseWriter, requ *http.Request) {
-		record(requ, false)
-		resp.WriteHeader(http.StatusNotFound)
+		urlPath := requ.URL.Path
+		key := keyList[urlPath]
+		if key == "" {
+			record(requ, false)
+			resp.WriteHeader(http.StatusNotFound)
+		} else {
+			record(requ, true)
+			resp.Header().Set("Content-Type", "text/plain")
+			resp.Header().Set("Content-Length", strconv.Itoa(len(key)))
+			resp.WriteHeader(http.StatusOK)
+			io.WriteString(resp, key)
+		}
 	})
 
-	panic(server.ListenAndServe())
+	panic(http.ListenAndServe("0.0.0.0:80", nil))
+}
+
+type keyList struct {
+	Cache map[string]string
+}
+
+func (self keyList) String() string {
+	return fmt.Sprintf("%v", self.Cache)
+}
+
+func (self keyList) Set(value string) error {
+	cutList := strings.Split(value, "-=")
+
+	if len(cutList) < 2 {
+		err := fmt.Errorf("路徑與金鑰的設定值 %q 不如預期。", value)
+		return err
+	} else if len(cutList) != 2 {
+		err := fmt.Errorf("路徑與金鑰的設定值 %q 解析到過多參數。", value)
+		return err
+	}
+
+	path := cutList[0]
+	key := cutList[1]
+
+	if path == "" || key == "" {
+		panic("未提供指定路徑或金鑰。")
+	} else if string(path[0]) != "/" {
+		panic("指定路徑必須以 \"/\" 為開頭。")
+	}
+
+	self.Cache[path] = key
+	return nil
 }
 
 type CmdFlag struct {
-	Path string
-	Key  string
+	KeyList keyList
 }
 
 func handleFlag() CmdFlag {
-	insCmdFlag := CmdFlag{}
-	flag.StringVar(&insCmdFlag.Path, "path", "", "指定路徑。")
-	flag.StringVar(&insCmdFlag.Key, "key", "", "指定金鑰。")
+	insCmdFlag := CmdFlag{KeyList: keyList{Cache: make(map[string]string)}}
+	flag.Var(insCmdFlag.KeyList, "s", "設定路徑與金鑰。 (ex: `path-=key`)")
 	flag.Parse()
 	return insCmdFlag
 }
